@@ -1,0 +1,9 @@
+[submodule "config-server"]
+	path = config-server
+	url = git@github.com:LithiraJK/config-server.git
+[submodule "service-registry"]
+	path = service-registry
+	url = git@github.com:LithiraJK/service-registry.git
+[submodule "api-gateway"]
+	path = api-gateway
+	url = git@github.com:LithiraJK/api-gateway.git
