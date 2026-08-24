@@ -122,9 +122,7 @@ jobs:
           gcloud compute instance-groups managed rolling-action restart \
             ${{ env.MIG_NAME }} \
             --region=${{ env.MIG_REGION }} \
-            --project=${{ env.GCP_PROJECT_ID }} \
-            --max-surge=1 \
-            --max-unavailable=1
+            --project=${{ env.GCP_PROJECT_ID }}
 
       # ── 6. Wait for rollout to complete ──────────────────────────────────
       - name: Wait for rollout to stabilize
