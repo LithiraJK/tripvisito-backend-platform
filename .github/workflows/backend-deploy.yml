@@ -1,0 +1,138 @@
+name: Backend — Build & Deploy to GCP
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "api-gateway/**"
+      - "config-server/**"
+      - "service-registry/**"
+      - ".github/workflows/backend-deploy.yml"
+  workflow_dispatch: # allow manual trigger
+
+
+env:
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GCS_BUCKET: gs://tripvisito-trip-images/jars
+  MIG_NAME: mig-services
+  MIG_REGION: asia-southeast1
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────
+  # JOB 1: Build all 7 Spring Boot microservices with Java 25
+  # ─────────────────────────────────────────────────────────────────────────
+  build:
+    name: Build Maven Microservices (Java 25)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # ── 1. Checkout with all submodules ──────────────────────────────────
+      - name: Checkout repository (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      # ── 2. Set up Java 25 (Temurin) ─────────────────────────────────────
+      - name: Set up Java 25 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+
+      # ── 3. Build platform services ───────────────────────────────────────
+      # Order: config-server → service-registry → api-gateway
+      - name: Build — config-server
+        working-directory: config-server
+        run: mvn -B package -DskipTests --no-transfer-progress
+
+      - name: Build — service-registry
+        working-directory: service-registry
+        run: mvn -B package -DskipTests --no-transfer-progress
+
+      - name: Build — api-gateway
+        working-directory: api-gateway
+        run: mvn -B package -DskipTests --no-transfer-progress
+
+      # ── 4. Collect all JARs into a staging directory ─────────────────────
+      - name: Collect JARs
+        run: |
+          mkdir -p /tmp/tripvisito-jars
+          find . -path "*/target/*-1.0.0.jar" \
+            ! -name "*-tests.jar" \
+            ! -name "*-sources.jar" \
+            -exec cp {} /tmp/tripvisito-jars/ \;
+          echo "=== JARs collected ==="
+          ls -lh /tmp/tripvisito-jars/
+
+      # ── 6. Upload JARs as GitHub artifact (for the deploy job) ───────────
+      - name: Upload JAR artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tripvisito-jars
+          path: /tmp/tripvisito-jars/*.jar
+          retention-days: 7
+          if-no-files-found: error
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # JOB 2: Deploy — upload JARs to GCS + rolling restart MIG
+  # ─────────────────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to GCS & Rolling Restart MIG
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+
+    steps:
+      # ── 1. Download the JARs built in the build job ──────────────────────
+      - name: Download JAR artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: tripvisito-jars
+          path: /tmp/tripvisito-jars
+
+      - name: List downloaded JARs
+        run: ls -lh /tmp/tripvisito-jars/
+
+      # ── 2. Authenticate to GCP ───────────────────────────────────────────
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      # ── 3. Set up gcloud SDK ─────────────────────────────────────────────
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      # ── 4. Upload JARs to GCS ────────────────────────────────────────────
+      - name: Upload JARs to GCS
+        run: |
+          gsutil -m rsync -d /tmp/tripvisito-jars/ ${{ env.GCS_BUCKET }}/
+          echo "=== GCS JAR listing after upload ==="
+          gsutil ls -lh ${{ env.GCS_BUCKET }}/
+
+      # ── 5. Rolling restart the MIG (VMs will pull new JARs on reboot) ────
+      - name: Rolling restart — mig-services
+        run: |
+          gcloud compute instance-groups managed rolling-action restart \
+            ${{ env.MIG_NAME }} \
+            --region=${{ env.MIG_REGION }} \
+            --project=${{ env.GCP_PROJECT_ID }} \
+            --max-surge=1 \
+            --max-unavailable=1
+
+      # ── 6. Wait for rollout to complete ──────────────────────────────────
+      - name: Wait for rollout to stabilize
+        run: |
+          gcloud compute instance-groups managed wait-until \
+            ${{ env.MIG_NAME }} \
+            --version-target-reached \
+            --region=${{ env.MIG_REGION }} \
+            --project=${{ env.GCP_PROJECT_ID }} \
+            --timeout=600
+          echo "Rollout complete ✅"
