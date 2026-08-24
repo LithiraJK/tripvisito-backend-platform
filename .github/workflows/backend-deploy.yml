@@ -118,19 +118,18 @@ jobs:
 
       # ── 5. Rolling restart the MIG (VMs will pull new JARs on reboot) ────
       - name: Rolling restart — mig-services
-        run: |
-          gcloud compute instance-groups managed rolling-action restart \
-            ${{ env.MIG_NAME }} \
-            --region=${{ env.MIG_REGION }} \
-            --project=${{ env.GCP_PROJECT_ID }}
+        env:
+          MIG: ${{ env.MIG_NAME }}
+          REGION: ${{ env.MIG_REGION }}
+          PROJECT: ${{ env.GCP_PROJECT_ID }}
+        run: gcloud compute instance-groups managed rolling-action restart "$MIG" --region="$REGION" --project="$PROJECT"
 
       # ── 6. Wait for rollout to complete ──────────────────────────────────
       - name: Wait for rollout to stabilize
+        env:
+          MIG: ${{ env.MIG_NAME }}
+          REGION: ${{ env.MIG_REGION }}
+          PROJECT: ${{ env.GCP_PROJECT_ID }}
         run: |
-          gcloud compute instance-groups managed wait-until \
-            ${{ env.MIG_NAME }} \
-            --version-target-reached \
-            --region=${{ env.MIG_REGION }} \
-            --project=${{ env.GCP_PROJECT_ID }} \
-            --timeout=600
+          gcloud compute instance-groups managed wait-until "$MIG" --version-target-reached --region="$REGION" --project="$PROJECT" --timeout=600
           echo "Rollout complete ✅"
