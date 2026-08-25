@@ -112,7 +112,7 @@ jobs:
       # ── 4. Upload JARs to GCS ────────────────────────────────────────────
       - name: Upload JARs to GCS
         run: |
-          gsutil -m rsync -d /tmp/tripvisito-jars/ ${{ env.GCS_BUCKET }}/
+          gsutil -m rsync /tmp/tripvisito-jars/ ${{ env.GCS_BUCKET }}/
           echo "=== GCS JAR listing after upload ==="
           gsutil ls -lh ${{ env.GCS_BUCKET }}/
 
